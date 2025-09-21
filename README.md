@@ -10,8 +10,8 @@ This repository provides ROS 2 nodes for performing multiple vision tasks—such
 3. [Usage](#usage)
 4. [Tasks](#tasks)
 5. [Demos](#demos)
-6. [Licensing](#licensing)
-7. [Bibliography](#bibliography)
+6. [License](#license)
+7. [References](#references)
 
 
 ## Installation
@@ -77,27 +77,33 @@ Each task has a `head_{task}` subfolder in `dinov3_toolkit` containing a `model_
 
 ### Object detection
 
-Check the following repo: [object_detection_dinov3](https://github.com/Raessan/object_detection_dinov3) (repo public soon)
+Check the following repo: [object_detection_dinov3](https://github.com/Raessan/object_detection_dinov3)
 
 ### Semantic segmentation
 
-Check the following repo: [semantic_segmentation_dinov3](https://github.com/Raessan/semantic_segmentation_dinov3) (repo public soon)
+Check the following repo: [semantic_segmentation_dinov3](https://github.com/Raessan/semantic_segmentation_dinov3)
 
 ### Depth estimation
 
-Check the following repo: [depth_dinov3](https://github.com/Raessan/depth_dinov3) (repo public soon)
+Check the following repo: [depth_dinov3](https://github.com/Raessan/depth_dinov3)
 
 ## Demo
 
 <img src="assets/test_video_inference.gif" height="800">
 
-## Licensing
+## License
 - Code in this repo: Apache-2.0.
 - DINOv3 submodule: licensed separately by Meta (see its LICENSE).
 - We don't distribute DINO weights. Follow upstream instructions to obtain them.
 
-## Bibliography
+## References
 
 - [Oriane Siméoni, Huy V. Vo, Maximilian Seitzer, Federico Baldassarre, Maxime Oquab, Cijo Jose, Vasil Khalidov, Marc Szafraniec, Seungeun Yi, Michaël Ramamonjisoa, Francisco Massa, Daniel Haziza, Luca Wehrstedt, Jianyuan Wang, Timothée Darcet, Théo Moutakanni, Leonel Sentana, Claire Roberts, Andrea Vedaldi, Jamie Tolan, John Brandt, Camille Couprie, Julien Mairal, Hervé Jégou, Patrick Labatut, Piotr Bojanowski (2025). Dinov3. *arXiv preprint arXiv:2508.10104.*](https://github.com/facebookresearch/dinov3)
 
 - [González-Santamarta, Miguel Á (2023). yolo_ros](https://github.com/mgonzs13/yolo_ros) (used as reference for some part of the implementation)
+
+- [Escarabajal, Rafael J. (2025). object_detection_dinov3](https://github.com/Raessan/object_detection_dinov3)
+
+- [Escarabajal, Rafael J. (2025). semantic_segmentation_dinov3](https://github.com/Raessan/semantic_segmentation_dinov3)
+
+- [Escarabajal, Rafael J. (2025). depth_dinov3](https://github.com/Raessan/depth_dinov3)
