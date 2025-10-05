@@ -35,3 +35,13 @@ dinov3_node:
     # Params for depth estimation
     depth_model:
       weights_path: '/dinov3_ros/dinov3_toolkit/head_depth/weights/model.pth'
+
+    # Params for optical flow model
+    optical_flow_model:
+      weights_path: '/dinov3_ros/dinov3_toolkit/head_optical_flow/weights/model.pth'
+      proj_channels: 256
+      radius: 4
+      fusion_channels: 320
+      fusion_layers: 3
+      convex_up: 16
+      refinement_layers: 2

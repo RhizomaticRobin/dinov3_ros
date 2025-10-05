@@ -18,6 +18,7 @@ DEFAULT_DEBUG = "true"
 DEFAULT_PERFORM_DETECTION = "true"
 DEFAULT_PERFORM_SEGMENTATION = "true"
 DEFAULT_PERFORM_DEPTH = "true"
+DEFAULT_PERFORM_OPTICAL_FLOW = "true"
 DEFAULT_PARAMS_FILE =  os.path.join(get_package_share_directory("dinov3_bringup"), "config", "params.yaml")
 DEFAULT_TOPIC_IMAGE = "topic_image"
 DEFAULT_IMAGE_RELIABILITY = "2" # 0 corresponds to "SYSTEM_DEFAULT", 1 corresponds to "RELIABLE", 2 corresponds to "BEST_EFFORT"
@@ -36,6 +37,9 @@ def generate_launch_description():
     perform_depth = LaunchConfiguration('perform_depth')
     perform_depth_arg = DeclareLaunchArgument('perform_depth', default_value=DEFAULT_PERFORM_DEPTH)
 
+    perform_optical_flow = LaunchConfiguration('perform_optical_flow')
+    perform_optical_flow_arg = DeclareLaunchArgument('perform_optical_flow', default_value=DEFAULT_PERFORM_OPTICAL_FLOW)
+
     params_file = LaunchConfiguration('params_file')
     params_file_arg = DeclareLaunchArgument('params_file', default_value=DEFAULT_PARAMS_FILE)
 
@@ -52,6 +56,7 @@ def generate_launch_description():
         perform_detection_arg,
         perform_segmentation_arg,
         perform_depth_arg,
+        perform_optical_flow_arg,
         params_file_arg,
         debug_arg,
         use_sim_time_arg,
@@ -66,6 +71,7 @@ def generate_launch_description():
             parameters=[{'perform_detection': perform_detection},
                         {'perform_segmentation': perform_segmentation},
                         {'perform_depth': perform_depth},
+                        {'perform_optical_flow': perform_optical_flow},
                         {'debug': debug},
                         {'use_sim_time': use_sim_time},
                         {'image_reliability': image_reliability},

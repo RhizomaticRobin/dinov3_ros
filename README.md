@@ -87,9 +87,19 @@ Check the following repo: [semantic_segmentation_dinov3](https://github.com/Raes
 
 Check the following repo: [depth_dinov3](https://github.com/Raessan/depth_dinov3)
 
+### Optical flow
+
+Check the following repo: [optical_flow_dinov3](https://github.com/Raessan/optical_flow_dinov3)
+
 ## Demo
 
-<img src="assets/test_video_inference.gif" height="800">
+### Detection, semantic segmentation and depth estimation
+
+<img src="assets/detection_seg_depth.gif" height="800">
+
+### Optical flow
+
+<img src="assets/optical_flow.gif" height="800">
 
 ## License
 - Code in this repo: Apache-2.0.
@@ -105,5 +115,7 @@ Check the following repo: [depth_dinov3](https://github.com/Raessan/depth_dinov3
 - [Escarabajal, Rafael J. (2025). object_detection_dinov3](https://github.com/Raessan/object_detection_dinov3)
 
 - [Escarabajal, Rafael J. (2025). semantic_segmentation_dinov3](https://github.com/Raessan/semantic_segmentation_dinov3)
+
+- [Escarabajal, Rafael J. (2025). optical_flow_dinov3](https://github.com/Raessan/optical_flow_dinov3)
 
 - [Escarabajal, Rafael J. (2025). depth_dinov3](https://github.com/Raessan/depth_dinov3)

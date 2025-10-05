@@ -30,6 +30,9 @@ from dinov3_toolkit.head_segmentation.utils import generate_segmentation_overlay
 from dinov3_toolkit.head_depth.model_head import DepthHeadLite
 from dinov3_toolkit.head_depth.utils import depth_to_colormap
 
+from dinov3_toolkit.head_optical_flow.model_head import LiteFlowHead
+from dinov3_toolkit.head_optical_flow.utils import flow_to_image
+
 # Extra functions to convert data to msgs
 from dinov3_ros.utils.detection_utils import outputs_to_detection2darray
 
@@ -73,11 +76,21 @@ class Dinov3Node(LifecycleNode):
         # Depth model params
         self.declare_parameter("depth_model.weights_path", '')
 
+        # Optical flow model params
+        self.declare_parameter("optical_flow_model.weights_path", '')
+        self.declare_parameter("optical_flow_model.proj_channels", 256)
+        self.declare_parameter("optical_flow_model.radius", 4)
+        self.declare_parameter("optical_flow_model.fusion_channels", 448)
+        self.declare_parameter("optical_flow_model.fusion_layers", 3)
+        self.declare_parameter("optical_flow_model.convex_up", 3)
+        self.declare_parameter("optical_flow_model.refinement_layers", 2)
+
         # Modes
         self.declare_parameter("debug", False)
         self.declare_parameter("perform_detection", False)
         self.declare_parameter("perform_segmentation", False)
         self.declare_parameter("perform_depth", False)
+        self.declare_parameter("perform_optical_flow", False)
 
         self.get_logger().info(f"[{self.get_name()}] Created...")
 
@@ -126,11 +139,23 @@ class Dinov3Node(LifecycleNode):
                 'weights_path': self.get_parameter('depth_model.weights_path').get_parameter_value().string_value,
             }
 
+            # Optical flow params
+            self.optical_flow_model = {
+                'weights_path': self.get_parameter('optical_flow_model.weights_path').get_parameter_value().string_value,
+                'proj_channels': self.get_parameter('optical_flow_model.proj_channels').get_parameter_value().integer_value,
+                'radius': self.get_parameter('optical_flow_model.radius').get_parameter_value().integer_value,
+                'fusion_channels': self.get_parameter('optical_flow_model.fusion_channels').get_parameter_value().integer_value,
+                'fusion_layers': self.get_parameter('optical_flow_model.fusion_layers').get_parameter_value().integer_value,
+                'convex_up': self.get_parameter('optical_flow_model.convex_up').get_parameter_value().integer_value,
+                'refinement_layers': self.get_parameter('optical_flow_model.refinement_layers').get_parameter_value().integer_value,
+            }
+
             # Modes
             self.debug = self.get_parameter("debug").get_parameter_value().bool_value
             self.perform_detection = self.get_parameter("perform_detection").get_parameter_value().bool_value
             self.perform_segmentation = self.get_parameter("perform_segmentation").get_parameter_value().bool_value
             self.perform_depth = self.get_parameter("perform_depth").get_parameter_value().bool_value
+            self.perform_optical_flow = self.get_parameter("perform_optical_flow").get_parameter_value().bool_value
 
             # Translate mean and std to 3D tensor
             self.img_mean = np.array(self.img_mean, dtype=np.float32)[:, None, None]
@@ -149,19 +174,24 @@ class Dinov3Node(LifecycleNode):
             self.pubs_debug = []
 
             self.pub_detections = self.make_pub(Detection2DArray, "dinov3/detections", 10)
-            self.pub_sem_seg    = self.make_pub(Image,            "dinov3/sem_seg",    10)
-            self.pub_depth      = self.make_pub(Image,            "dinov3/depth",      10)
+            self.pub_sem_seg = self.make_pub(Image, "dinov3/sem_seg", 10)
+            self.pub_depth = self.make_pub(Image, "dinov3/depth", 10)
+            self.pub_optical_flow = self.make_pub(Image, "dinov3/optical_flow", 10)
 
             if self.debug:
                 self.pub_img_detections = self.make_pub(Image, "dinov3/debug/img_detections", 10, debug=True)
-                self.pub_img_sem_seg    = self.make_pub(Image, "dinov3/debug/img_sem_seg",    10, debug=True)
-                self.pub_img_depth      = self.make_pub(Image, "dinov3/debug/img_depth",      10, debug=True)
+                self.pub_img_sem_seg = self.make_pub(Image, "dinov3/debug/img_sem_seg", 10, debug=True)
+                self.pub_img_depth = self.make_pub(Image, "dinov3/debug/img_depth", 10, debug=True)
+                self.pub_img_optical_flow = self.make_pub(Image, "dinov3/debug/img_optical_flow", 10, debug=True)
 
             # CV bridge
             self.cv_bridge = CvBridge()
 
             # Counter image
             self.img_counter = 0
+
+            # Features from previous iteration
+            self.feats_prev = None
 
      
         except Exception as e:
@@ -218,6 +248,19 @@ class Dinov3Node(LifecycleNode):
                 self.depth_head = DepthHeadLite(in_ch=self.dino_model['embed_dim'], out_size=(self.segmentation_model["target_size"], self.segmentation_model["target_size"])).to(self.device)
                 self.depth_head.load_state_dict(torch.load(self.depth_model['weights_path'], map_location = self.device))
                 self.depth_head.eval()
+
+            # Open optical flow model
+            if self.perform_optical_flow:
+                self.optical_flow_head = LiteFlowHead(out_size = (self.img_size, self.img_size), 
+                                                        in_channels = self.dino_model['embed_dim'],
+                                                        proj_channels = self.optical_flow_model["proj_channels"],
+                                                        radius = self.optical_flow_model["radius"],
+                                                        fusion_channels = self.optical_flow_model["fusion_channels"],
+                                                        fusion_layers = self.optical_flow_model["fusion_layers"],
+                                                        convex_up = self.optical_flow_model["convex_up"],
+                                                        refinement_layers = self.optical_flow_model["refinement_layers"]).to(self.device)
+                self.optical_flow_head.load_state_dict(torch.load(self.optical_flow_model['weights_path'], map_location = self.device))
+                self.optical_flow_head.eval()
         
         except Exception as e:
             self.get_logger().error(f"Activation failed. Error: {e}")
@@ -323,7 +366,7 @@ class Dinov3Node(LifecycleNode):
                     # Publish
                     self.pub_img_sem_seg.publish(img_sem_seg_msg)
 
-            if self.perform_segmentation:
+            if self.perform_depth:
                 depth_map = self.depth_head(feats)
                 depth_np = np.ascontiguousarray(depth_map.squeeze().cpu().numpy(), dtype=np.float32)
 
@@ -338,6 +381,24 @@ class Dinov3Node(LifecycleNode):
                     img_depth_msg = self.cv_bridge.cv2_to_imgmsg(img_depth, encoding='bgr8')
                     img_depth_msg.header = msg.header
                     self.pub_img_depth.publish(img_depth_msg)
+
+            if self.perform_optical_flow and self.feats_prev is not None:
+                optical_flow = self.optical_flow_head(self.feats_prev, feats)
+
+                optical_flow_np = np.ascontiguousarray(optical_flow.squeeze().permute(1,2,0).cpu().numpy(), dtype=np.float32)
+                optical_flow_msg = self.cv_bridge.cv2_to_imgmsg(optical_flow_np, encoding='32FC2')
+                optical_flow_msg.header = msg.header
+
+                self.pub_optical_flow.publish(optical_flow_msg)
+
+                if self.debug:
+                    img_optical_flow = flow_to_image(optical_flow_np)
+
+                    img_optical_flow_msg = self.cv_bridge.cv2_to_imgmsg(img_optical_flow, encoding='bgr8')
+                    img_optical_flow_msg.header = msg.header
+                    self.pub_img_optical_flow.publish(img_optical_flow_msg)
+
+            self.feats_prev = feats.clone()
 
     # Helper functions to create publishers
     def make_pub(self, msg_type, topic, depth=10, debug=False):
