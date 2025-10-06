@@ -392,7 +392,7 @@ class Dinov3Node(LifecycleNode):
                 self.pub_optical_flow.publish(optical_flow_msg)
 
                 if self.debug:
-                    img_optical_flow = flow_to_image(optical_flow_np)
+                    img_optical_flow = flow_to_image(optical_flow_np, clip_flow_min=3, convert_to_bgr=True)
 
                     img_optical_flow_msg = self.cv_bridge.cv2_to_imgmsg(img_optical_flow, encoding='bgr8')
                     img_optical_flow_msg.header = msg.header
