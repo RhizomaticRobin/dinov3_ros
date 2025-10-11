@@ -1,3 +1,6 @@
 [submodule "dinov3"]
 	path = dinov3
 	url = https://github.com/facebookresearch/dinov3.git
+[submodule "tensorrt_lib"]
+	path = tensorrt_lib
+	url = git@github.com:Raessan/tensorrt_lib.git

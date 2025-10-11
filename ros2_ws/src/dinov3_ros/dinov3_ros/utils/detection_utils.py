@@ -6,6 +6,8 @@ from vision_msgs.msg import (
     ObjectHypothesisWithPose, Pose2D, Point2D
 )
 
+from dinov3_toolkit.head_detection.utils import decode_outputs
+
 def outputs_to_detection2darray(boxes: torch.Tensor,
                         scores: torch.Tensor,
                         labels: torch.Tensor,
@@ -57,3 +59,30 @@ def outputs_to_detection2darray(boxes: torch.Tensor,
         arr.detections.append(det)
 
     return arr
+
+def decode_outputs_tensorrt(outputs, img_size, score_thresh, nms_thresh):
+    n_levels = int(len(outputs)/3)
+    model_outputs = {}
+    model_outputs['cls'] = outputs[0:n_levels]
+    model_outputs['reg'] = outputs[n_levels:2*n_levels]
+    model_outputs['ctr'] = outputs[2*n_levels:3*n_levels]
+
+    # Compute the stride (scaling factor) of the first output level
+    first_stride = img_size / model_outputs['cls'][0].shape[2]
+
+    # Collect strides for each feature level (used for decoding predictions)
+    strides = [first_stride]
+    for l in range(1, len(model_outputs['cls'])):
+        strides.append(first_stride * 2**l)
+
+    # Decode raw model outputs into final predictions
+    # Applies thresholding and non-maximum suppression
+    boxes, scores, labels = decode_outputs(
+        model_outputs,
+        (img_size, img_size),   # Original image size
+        strides,
+        score_thresh=score_thresh, 
+        nms_thresh=nms_thresh
+    )
+
+    return boxes, scores, labels

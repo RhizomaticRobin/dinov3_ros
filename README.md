@@ -1,6 +1,6 @@
-# dinov3_ros: DINOv3-based ROS 2 package for vision tasks
+# dinov3_ros: DINOv3-based ROS 2 package for vision tasks (TensorRT version)
 
-This repository provides ROS 2 nodes for performing multiple vision tasks—such as object detection, semantic segmentation, and depth estimation—using Meta’s [DINOv3](https://github.com/facebookresearch/dinov3) as the backbone. A key advantage of this approach is that the DINOv3 backbone features are computed only once (the most computationally demanding step), and these shared features are then reused by lightweight task-specific heads. This design significantly reduces redundant computation and makes multi-task inference more efficient.
+This repository provides ROS 2 nodes for performing multiple vision tasks—such as object detection, semantic segmentation, and depth estimation—using Meta’s [DINOv3](https://github.com/facebookresearch/dinov3) as the backbone. A key advantage of this approach is that the DINOv3 backbone features are computed only once (the most computationally demanding step), and these shared features are then reused by lightweight task-specific heads. This design significantly reduces redundant computation and makes multi-task inference more efficient. In this version of the repo, the inference is performed using TensorRT.
 
 
 ## Table of Contents
@@ -34,6 +34,8 @@ The only package that has to be installed separately is pytorch, due to its depe
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu129 
 ```
 
+The user should also install TensorRT in the machine (see the Dockerfile for an example of installation in an AMD computer). Refer [here](https://docs.nvidia.com/deeplearning/tensorrt/latest/installing-tensorrt/installing.html) for the installation.
+
 Finally, we provide weights for the lightweight heads developed by us, but the DINOv3 backbone weights should be requested and obtained from their [repo](https://github.com/facebookresearch/dinov3). Its default placement is in `dinov3_toolkit/backbone/weights`. The presented heads have been trained using the `vits16plus` model from DINOv3 as a backbone.
 
 ## Docker
@@ -42,12 +44,10 @@ If running with docker, two steps are needed to work:
 
 1. First install the [Nvidia Container toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) in the host machine.
 
-2. In the Dockerfile, change the pytorch version according to your CUDA version.
-
-Then, run:
+2. Launch the Dockerfile setting all the arguments regarded to torch, CUDA and TensorRT versions:
 
 ``` 
-docker compose build
+docker compose build --build-arg arg1 --build-arg arg2
 docker compose up
 ``` 
 
@@ -65,19 +65,23 @@ Launch the bringup file from the `ros2_ws` folder with the command `ros2 launch 
 
 - **image_reliability**: The QoS reliability for the ROS2 subscriber. 0 corresponds to `SYSTEM_DEFAULT`, 1 corresponds to `RELIABLE`, and 2 corresponds to `BEST_EFFORT` (default: *2*)
 
-- **params_file**: The path to the config file with required information for the models. This file is by default in `config/params.yaml` and contains important variables such as the `img_size` (default *640x640*, used to train the provided models), the `device` (default *cuda*) and the paths of the backbones and heads, along with variables to create the models or perform inference.
+- **params_file**: The path to the config file with required information for the models. This file is by default in `config/params.yaml` and contains important variables such as the `img_size` (default *640x640*, used to train the provided models), the `tensorrt_params`, and the paths of the backbones and heads, along with variables to create the models or perform inference.
 
 The file `params.yaml` should be changed before launching the bringup file if the variables should be different from the ones provided.
+
+Please, revise the [tensorrt_lib](https://github.com/Raessan/tensorrt_lib) to understand its usage. You should be able to run its python use cases to make sure that the library is installed properly.
 
 ## Tasks
 
 META has only released model heads for the large ViT-7B backbone, so for smaller backbones we trained task-specific heads (each < 5M parameters) in separate repositories to achieve good precision. Our goal was not to beat SOTA models, but to provide a lightweight, plug-and-play toolkit. 
 
-Each task has a `head_{task}` subfolder in `dinov3_toolkit` containing a `model_head.py` and `utils.py` copied from the original repo. The `backbone` folder contains `model_backbone.py`, while `common.py` provides shared utilities. Some tasks also include a `class_names.txt` file listing the classes used for training.
+Each task has a `head_{task}` subfolder in `dinov3_toolkit` containing a `utils.py` copied from the original repo and a `weights` folder with the `.onnx` files (these will be deleted in the future and can be obtained in the repos corresponding to each subtask). The `backbone` folder should contain the `onnx` model for inference, while `common.py` provides shared utilities. Some tasks also include a `class_names.txt` file listing the classes used for training.
+
+Please, obtain the `.onnx` models from the `weights` folder of following repos corresponding to each subtask.
 
 ### Object detection
 
-Check the following repo: [object_detection_dinov3](https://github.com/Raessan/object_detection_dinov3)
+Check the following repo: [object_detection_dinov3](https://github.com/Raessan/object_detection_dinov3).
 
 ### Semantic segmentation
 
@@ -111,6 +115,8 @@ Check the following repo: [optical_flow_dinov3](https://github.com/Raessan/optic
 - [Oriane Siméoni, Huy V. Vo, Maximilian Seitzer, Federico Baldassarre, Maxime Oquab, Cijo Jose, Vasil Khalidov, Marc Szafraniec, Seungeun Yi, Michaël Ramamonjisoa, Francisco Massa, Daniel Haziza, Luca Wehrstedt, Jianyuan Wang, Timothée Darcet, Théo Moutakanni, Leonel Sentana, Claire Roberts, Andrea Vedaldi, Jamie Tolan, John Brandt, Camille Couprie, Julien Mairal, Hervé Jégou, Patrick Labatut, Piotr Bojanowski (2025). Dinov3. *arXiv preprint arXiv:2508.10104.*](https://github.com/facebookresearch/dinov3)
 
 - [González-Santamarta, Miguel Á (2023). yolo_ros](https://github.com/mgonzs13/yolo_ros) (used as reference for some part of the implementation)
+
+- [Escarabajal, Rafael J. (2025). tensorrt_lib](https://github.com/Raessan/tensorrt_lib)
 
 - [Escarabajal, Rafael J. (2025). object_detection_dinov3](https://github.com/Raessan/object_detection_dinov3)
 

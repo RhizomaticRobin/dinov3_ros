@@ -1,5 +1,4 @@
 import cv2
-from typing import List, Dict
 from cv_bridge import CvBridge
 
 import rclpy
@@ -17,25 +16,24 @@ from vision_msgs.msg import Detection2DArray
 import torch
 import numpy as np
 
-from dinov3_toolkit.backbone.model_backbone import DinoBackbone
+from pathlib import Path
 
 from dinov3_toolkit.common import image_to_tensor
 
-from dinov3_toolkit.head_detection.model_head import  DinoFCOSHead
-from dinov3_toolkit.head_detection.utils import detection_inference, generate_detection_overlay
+from dinov3_toolkit.head_detection.utils import generate_detection_overlay
 
-from dinov3_toolkit.head_segmentation.model_head import ASPPDecoder
 from dinov3_toolkit.head_segmentation.utils import generate_segmentation_overlay, outputs_to_maps
 
-from dinov3_toolkit.head_depth.model_head import DepthHeadLite
 from dinov3_toolkit.head_depth.utils import depth_to_colormap
 
-from dinov3_toolkit.head_optical_flow.model_head import LiteFlowHead
 from dinov3_toolkit.head_optical_flow.utils import flow_to_image
 
 # Extra functions to convert data to msgs
-from dinov3_ros.utils.detection_utils import outputs_to_detection2darray
+from dinov3_ros.utils.detection_utils import outputs_to_detection2darray, decode_outputs_tensorrt
 
+# TensorRT libs
+import tensorrt as trt
+from tensorrt_lib.tensorrt_python.tensorrt_engine import TensorRTEngine, Options
 
 class Dinov3Node(LifecycleNode):
 
@@ -45,45 +43,33 @@ class Dinov3Node(LifecycleNode):
 
         # General params
         self.declare_parameter("img_size", 800)
-        self.declare_parameter("patch_size", 16)
         self.declare_parameter("img_mean", [0.485, 0.456, 0.406])
         self.declare_parameter("img_std", [0.229, 0.224, 0.225])
-        self.declare_parameter("device", 'cuda')
         self.declare_parameter("image_reliability", QoSReliabilityPolicy.BEST_EFFORT)
 
         # DINO model params
-        self.declare_parameter("dino_model.repo_path", '')
-        self.declare_parameter("dino_model.model_name", 'dinov3_vits16plus')
-        self.declare_parameter("dino_model.weights_path", '')
-        self.declare_parameter("dino_model.n_layers", 12)
-        self.declare_parameter("dino_model.embed_dim", 384)
-        self.declare_parameter("dino_model.source", "local")
+        self.declare_parameter("dino_model.onnx_path", '')
 
         # Object detection model params
-        self.declare_parameter("detection_model.weights_path", '')
+        self.declare_parameter("detection_model.onnx_path", '')
         self.declare_parameter("detection_model.classes_path", '')
-        self.declare_parameter("detection_model.fpn_ch", 192)
-        self.declare_parameter("detection_model.n_convs", 4)
         self.declare_parameter("detection_model.score_thresh", 0.2)
         self.declare_parameter("detection_model.nms_thresh", 0.2)
 
         # Segmentation model params
-        self.declare_parameter("segmentation_model.weights_path", '')
+        self.declare_parameter("segmentation_model.onnx_path", '')
         self.declare_parameter("segmentation_model.classes_path", '')
-        self.declare_parameter("segmentation_model.hidden_dim", 256)
-        self.declare_parameter("segmentation_model.target_size", 320)
 
         # Depth model params
-        self.declare_parameter("depth_model.weights_path", '')
+        self.declare_parameter("depth_model.onnx_path", '')
 
         # Optical flow model params
-        self.declare_parameter("optical_flow_model.weights_path", '')
-        self.declare_parameter("optical_flow_model.proj_channels", 256)
-        self.declare_parameter("optical_flow_model.radius", 4)
-        self.declare_parameter("optical_flow_model.fusion_channels", 448)
-        self.declare_parameter("optical_flow_model.fusion_layers", 3)
-        self.declare_parameter("optical_flow_model.convex_up", 3)
-        self.declare_parameter("optical_flow_model.refinement_layers", 2)
+        self.declare_parameter("optical_flow_model.onnx_path", '')
+
+        # Params for TensorRT variables
+        self.declare_parameter("tensorrt_params.precision", '')
+        self.declare_parameter("tensorrt_params.device_index", 5)
+        self.declare_parameter("tensorrt_params.dla_core", 6)
 
         # Modes
         self.declare_parameter("debug", False)
@@ -100,54 +86,44 @@ class Dinov3Node(LifecycleNode):
         try:
             # General params
             self.img_size = self.get_parameter("img_size").get_parameter_value().integer_value
-            self.patch_size = self.get_parameter("patch_size").get_parameter_value().integer_value
             self.img_mean = self.get_parameter("img_mean").get_parameter_value().double_array_value
             self.img_std = self.get_parameter("img_std").get_parameter_value().double_array_value
-            self.device = self.get_parameter("device").get_parameter_value().string_value
             self.image_reliability = self.get_parameter("image_reliability").get_parameter_value().integer_value
 
             # DINO model params
             self.dino_model = {
-                'repo_path': self.get_parameter('dino_model.repo_path').get_parameter_value().string_value,
-                'model_name': self.get_parameter('dino_model.model_name').get_parameter_value().string_value,
-                'weights_path': self.get_parameter('dino_model.weights_path').get_parameter_value().string_value,
-                'n_layers': self.get_parameter('dino_model.n_layers').get_parameter_value().integer_value,
-                'embed_dim': self.get_parameter('dino_model.embed_dim').get_parameter_value().integer_value,
-                'source': self.get_parameter('dino_model.source').get_parameter_value().string_value,
+                'onnx_path': self.get_parameter('dino_model.onnx_path').get_parameter_value().string_value,
             }
 
             # Object detection params
             self.detection_model = {
-                'weights_path': self.get_parameter('detection_model.weights_path').get_parameter_value().string_value,
+                'onnx_path': self.get_parameter('detection_model.onnx_path').get_parameter_value().string_value,
                 'classes_path': self.get_parameter('detection_model.classes_path').get_parameter_value().string_value,
-                'fpn_ch': self.get_parameter('detection_model.fpn_ch').get_parameter_value().integer_value,
-                'n_convs': self.get_parameter('detection_model.n_convs').get_parameter_value().integer_value,
                 'score_thresh': self.get_parameter('detection_model.score_thresh').get_parameter_value().double_value,
                 'nms_thresh': self.get_parameter('detection_model.nms_thresh').get_parameter_value().double_value,
             }
 
             # Semantic segmentation params
             self.segmentation_model = {
-                'weights_path': self.get_parameter('segmentation_model.weights_path').get_parameter_value().string_value,
+                'onnx_path': self.get_parameter('segmentation_model.onnx_path').get_parameter_value().string_value,
                 'classes_path': self.get_parameter('segmentation_model.classes_path').get_parameter_value().string_value,
-                'hidden_dim': self.get_parameter('segmentation_model.hidden_dim').get_parameter_value().integer_value,
-                'target_size': self.get_parameter('segmentation_model.target_size').get_parameter_value().integer_value,
             }
 
             # Depth params
             self.depth_model = {
-                'weights_path': self.get_parameter('depth_model.weights_path').get_parameter_value().string_value,
+                'onnx_path': self.get_parameter('depth_model.onnx_path').get_parameter_value().string_value,
             }
 
             # Optical flow params
             self.optical_flow_model = {
-                'weights_path': self.get_parameter('optical_flow_model.weights_path').get_parameter_value().string_value,
-                'proj_channels': self.get_parameter('optical_flow_model.proj_channels').get_parameter_value().integer_value,
-                'radius': self.get_parameter('optical_flow_model.radius').get_parameter_value().integer_value,
-                'fusion_channels': self.get_parameter('optical_flow_model.fusion_channels').get_parameter_value().integer_value,
-                'fusion_layers': self.get_parameter('optical_flow_model.fusion_layers').get_parameter_value().integer_value,
-                'convex_up': self.get_parameter('optical_flow_model.convex_up').get_parameter_value().integer_value,
-                'refinement_layers': self.get_parameter('optical_flow_model.refinement_layers').get_parameter_value().integer_value,
+                'onnx_path': self.get_parameter('optical_flow_model.onnx_path').get_parameter_value().string_value,
+            }
+
+            # TensorRT params
+            self.tensorrt_params = {
+                'precision': self.get_parameter('tensorrt_params.precision').get_parameter_value().string_value,
+                'device_index': self.get_parameter('tensorrt_params.device_index').get_parameter_value().integer_value,
+                'dla_core': self.get_parameter('tensorrt_params.dla_core').get_parameter_value().integer_value,
             }
 
             # Modes
@@ -211,56 +187,60 @@ class Dinov3Node(LifecycleNode):
             # Activate publishers
             self.activate_pubs(state)
 
-            # DINO model
-            self.dino_backbone_loader = torch.hub.load(
-                repo_or_dir=self.dino_model["repo_path"],
-                model=self.dino_model["model_name"],
-                source=self.dino_model["source"],
-                weights=self.dino_model["weights_path"]
-            )
-            self.dino_backbone = DinoBackbone(self.dino_backbone_loader, self.dino_model['n_layers']).to(self.device)
-            self.dino_backbone.eval()
+            # We create the options variable
+            trt_options = Options()
+            trt_options.out_file_path = str(Path(self.dino_model["onnx_path"]).parent)
+            trt_options.precision = getattr(trt, self.tensorrt_params["precision"])
+            trt_options.batch_size = 1
+            trt_options.deviceIndex = self.tensorrt_params["device_index"]
+            trt_options.dlaCore = self.tensorrt_params["dla_core"]
+
+            # Create the engine, build and load the network
+            self.engine_dino = TensorRTEngine(trt_options)
+            self.engine_dino.build(self.dino_model["onnx_path"])
+            self.engine_dino.loadNetwork()
         
             # Open detection model
             if self.perform_detection:
                 with open(self.detection_model["classes_path"]) as f:
                     self.detection_class_names = [line.strip() for line in f]
-                detection_num_classes = len(self.detection_class_names)
-                self.detection_head = DinoFCOSHead(backbone_out_channels=self.dino_model['embed_dim'], 
-                                                   fpn_channels=self.detection_model['fpn_ch'], 
-                                                   num_classes=detection_num_classes, 
-                                                   num_convs=self.detection_model['n_convs']).to(self.device)
-                self.detection_head.load_state_dict(torch.load(self.detection_model['weights_path'], map_location = self.device))
-                self.detection_head.eval()
+
+                # Change option to use the depth path
+                trt_options.out_file_path = str(Path(self.detection_model["onnx_path"]).parent)
+                # Create the engine, build and load the network
+                self.engine_detection = TensorRTEngine(trt_options)
+                self.engine_detection.build(self.detection_model["onnx_path"])
+                self.engine_detection.loadNetwork()
 
             # Open segmentation model
             if self.perform_segmentation:
                 with open(self.segmentation_model["classes_path"]) as f:
                     self.segmentation_class_names = [line.strip() for line in f]
-                segmentation_num_classes = len(self.segmentation_class_names)
-                self.segmentation_head = ASPPDecoder(num_classes=segmentation_num_classes, in_ch=self.dino_model['embed_dim'], 
-                                                  target_size=(self.segmentation_model["target_size"], self.segmentation_model["target_size"])).to(self.device)
-                self.segmentation_head.load_state_dict(torch.load(self.segmentation_model['weights_path'], map_location = self.device))
-                self.segmentation_head.eval()
+
+                # Change option to use the segmentation path
+                trt_options.out_file_path = str(Path(self.segmentation_model["onnx_path"]).parent)
+                # Create the engine, build and load the network
+                self.engine_segmentation = TensorRTEngine(trt_options)
+                self.engine_segmentation.build(self.segmentation_model["onnx_path"])
+                self.engine_segmentation.loadNetwork()
 
             # Open depth model
             if self.perform_depth:
-                self.depth_head = DepthHeadLite(in_ch=self.dino_model['embed_dim'], out_size=(self.segmentation_model["target_size"], self.segmentation_model["target_size"])).to(self.device)
-                self.depth_head.load_state_dict(torch.load(self.depth_model['weights_path'], map_location = self.device))
-                self.depth_head.eval()
+                # Change option to use the depth path
+                trt_options.out_file_path = str(Path(self.depth_model["onnx_path"]).parent)
+                # Create the engine, build and load the network
+                self.engine_depth = TensorRTEngine(trt_options)
+                self.engine_depth.build(self.depth_model["onnx_path"])
+                self.engine_depth.loadNetwork()
 
             # Open optical flow model
             if self.perform_optical_flow:
-                self.optical_flow_head = LiteFlowHead(out_size = (self.img_size, self.img_size), 
-                                                        in_channels = self.dino_model['embed_dim'],
-                                                        proj_channels = self.optical_flow_model["proj_channels"],
-                                                        radius = self.optical_flow_model["radius"],
-                                                        fusion_channels = self.optical_flow_model["fusion_channels"],
-                                                        fusion_layers = self.optical_flow_model["fusion_layers"],
-                                                        convex_up = self.optical_flow_model["convex_up"],
-                                                        refinement_layers = self.optical_flow_model["refinement_layers"]).to(self.device)
-                self.optical_flow_head.load_state_dict(torch.load(self.optical_flow_model['weights_path'], map_location = self.device))
-                self.optical_flow_head.eval()
+                # Change option to use the optical flow path
+                trt_options.out_file_path = str(Path(self.optical_flow_model["onnx_path"]).parent)
+                # Create the engine, build and load the network
+                self.engine_optical_flow = TensorRTEngine(trt_options)
+                self.engine_optical_flow.build(self.optical_flow_model["onnx_path"])
+                self.engine_optical_flow.loadNetwork()
         
         except Exception as e:
             self.get_logger().error(f"Activation failed. Error: {e}")
@@ -275,9 +255,7 @@ class Dinov3Node(LifecycleNode):
         self.destroy_subscription(self.sub_image)
         self.sub_image = None
         self.deactivate_pubs(state)
-        if self.device=="cuda" and torch.cuda.is_available():
-            self.get_logger().info("Clearing CUDA cache")
-            torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
         super().on_deactivate(state)
         self.get_logger().info(f"[{self.get_name()}] Deactivated")
         return TransitionCallbackReturn.SUCCESS
@@ -294,9 +272,7 @@ class Dinov3Node(LifecycleNode):
         self.get_logger().info(f"[{self.get_name()}] Shutting down...")
         self.deactivate_pubs(state)
         self.destroy_pubs()
-        if self.device=="cuda" and torch.cuda.is_available():
-            self.get_logger().info("Clearing CUDA cache")
-            torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
         super().on_shutdown(state)
         self.get_logger().info(f"[{self.get_name()}] Shutted down")
         return TransitionCallbackReturn.SUCCESS
@@ -310,95 +286,94 @@ class Dinov3Node(LifecycleNode):
             return
         
         self.img_counter += 1
-        
+
         img_resized = cv2.resize(cv_image, (self.img_size, self.img_size), interpolation=cv2.INTER_LINEAR)
-        img_tensor = image_to_tensor(img_resized, self.img_mean, self.img_std).unsqueeze(0).to(self.device)
+        img_tensor = image_to_tensor(img_resized, self.img_mean, self.img_std).unsqueeze(0).to("cuda")
 
-        with torch.no_grad():
-            feats = self.dino_backbone(img_tensor)
+        feats = self.engine_dino.do_inference([img_tensor], out_format='torch')[0]
 
-            if self.perform_detection:
-                boxes, scores, labels = detection_inference(self.detection_head, feats, (self.img_size, self.img_size), 
-                                                            score_thresh=self.detection_model['score_thresh'], 
-                                                            nms_thresh=self.detection_model['nms_thresh'])
-                
-                detections_msg = outputs_to_detection2darray(boxes, scores, labels, msg.header)
-                self.pub_detections.publish(detections_msg)
+        if self.perform_detection:
+            outputs = self.engine_detection.do_inference([feats], out_format='torch')
+            boxes, scores, labels = decode_outputs_tensorrt(outputs, self.img_size, 
+                                                            self.detection_model['score_thresh'], self.detection_model['nms_thresh'])
+            
+            detections_msg = outputs_to_detection2darray(boxes, scores, labels, msg.header)
+            self.pub_detections.publish(detections_msg)
 
-                
-                # If debug is activated, we draw the image with detections and publish it
-                if self.debug:
-                    img_with_boxes = generate_detection_overlay(img_resized, boxes, scores, labels, class_names=self.detection_class_names)
+            
+            # If debug is activated, we draw the image with detections and publish it
+            if self.debug:
+                img_with_boxes = generate_detection_overlay(img_resized, boxes, scores, labels, class_names=self.detection_class_names)
 
-                    # Convert to ROS Image message
-                    img_detections_msg = self.cv_bridge.cv2_to_imgmsg(img_with_boxes, encoding='rgb8')
+                # Convert to ROS Image message
+                img_detections_msg = self.cv_bridge.cv2_to_imgmsg(img_with_boxes, encoding='rgb8')
 
-                    # Publish
-                    self.pub_img_detections.publish(img_detections_msg)
+                # Publish
+                self.pub_img_detections.publish(img_detections_msg)
 
-            if self.perform_segmentation:
-                semantic_logits = self.segmentation_head(feats)
+        if self.perform_segmentation:
+            semantic_logits = self.engine_segmentation.do_inference([feats], out_format='torch')[0]
 
-                semantic_map = outputs_to_maps(semantic_logits, (self.img_size, self.img_size))
+            semantic_map = outputs_to_maps(semantic_logits, (self.img_size, self.img_size))
 
-                sem = np.ascontiguousarray(semantic_map, dtype=np.uint16)  # HxW, class IDs
-                sem_seg_msg = self.cv_bridge.cv2_to_imgmsg(sem, encoding='mono16')
-                sem_seg_msg.header = msg.header
+            sem = np.ascontiguousarray(semantic_map, dtype=np.uint16)  # HxW, class IDs
+            sem_seg_msg = self.cv_bridge.cv2_to_imgmsg(sem, encoding='mono16')
+            sem_seg_msg.header = msg.header
 
-                self.pub_sem_seg.publish(sem_seg_msg)
+            self.pub_sem_seg.publish(sem_seg_msg)
 
-                # If debug is activated, we obtain a colored instance map and publish it
-                if self.debug:
-                    segmentation_img = generate_segmentation_overlay(
-                        img_resized,
-                        semantic_map,
-                        class_names=self.segmentation_class_names,
-                        alpha=0.6,
-                        background_index=0,
-                        seed=42,
-                        draw_semantic_labels=True, 
-                        semantic_label_fontsize=5,
-                    )
+            # If debug is activated, we obtain a colored instance map and publish it
+            if self.debug:
+                segmentation_img = generate_segmentation_overlay(
+                    img_resized,
+                    semantic_map,
+                    class_names=self.segmentation_class_names,
+                    alpha=0.6,
+                    background_index=0,
+                    seed=42,
+                    draw_semantic_labels=True, 
+                    semantic_label_fontsize=5,
+                )
 
-                    # Convert to ROS Image message
-                    img_sem_seg_msg = self.cv_bridge.cv2_to_imgmsg(segmentation_img, encoding='rgb8')
+                # Convert to ROS Image message
+                img_sem_seg_msg = self.cv_bridge.cv2_to_imgmsg(segmentation_img, encoding='rgb8')
 
-                    # Publish
-                    self.pub_img_sem_seg.publish(img_sem_seg_msg)
+                # Publish
+                self.pub_img_sem_seg.publish(img_sem_seg_msg)
 
-            if self.perform_depth:
-                depth_map = self.depth_head(feats)
-                depth_np = np.ascontiguousarray(depth_map.squeeze().cpu().numpy(), dtype=np.float32)
+        if self.perform_depth:
 
-                depth_msg = self.cv_bridge.cv2_to_imgmsg(depth_np, encoding='32FC1')
-                depth_msg.header = msg.header
+            depth_np = self.engine_depth.do_inference([feats], out_format='numpy')[0].squeeze()
 
-                self.pub_depth.publish(depth_msg)
+            depth_msg = self.cv_bridge.cv2_to_imgmsg(depth_np, encoding='32FC1')
+            depth_msg.header = msg.header
 
-                # If debug is activated, we obtain a colored depth map and publish it
-                if self.debug:
-                    img_depth = depth_to_colormap(depth_np)
-                    img_depth_msg = self.cv_bridge.cv2_to_imgmsg(img_depth, encoding='bgr8')
-                    img_depth_msg.header = msg.header
-                    self.pub_img_depth.publish(img_depth_msg)
+            self.pub_depth.publish(depth_msg)
 
-            if self.perform_optical_flow and self.feats_prev is not None:
-                optical_flow = self.optical_flow_head(self.feats_prev, feats)
+            # If debug is activated, we obtain a colored depth map and publish it
+            if self.debug:
+                img_depth = depth_to_colormap(depth_np)
+                img_depth_msg = self.cv_bridge.cv2_to_imgmsg(img_depth, encoding='bgr8')
+                img_depth_msg.header = msg.header
+                self.pub_img_depth.publish(img_depth_msg)
 
-                optical_flow_np = np.ascontiguousarray(optical_flow.squeeze().permute(1,2,0).cpu().numpy(), dtype=np.float32)
-                optical_flow_msg = self.cv_bridge.cv2_to_imgmsg(optical_flow_np, encoding='32FC2')
-                optical_flow_msg.header = msg.header
+        if self.perform_optical_flow and self.feats_prev is not None:
+            optical_flow = self.engine_optical_flow.do_inference([self.feats_prev, feats], out_format = "numpy")[0]
 
-                self.pub_optical_flow.publish(optical_flow_msg)
+            optical_flow_np = optical_flow.squeeze().transpose(1,2,0).astype(np.float32)
+            optical_flow_msg = self.cv_bridge.cv2_to_imgmsg(optical_flow_np, encoding='32FC2')
+            optical_flow_msg.header = msg.header
 
-                if self.debug:
-                    img_optical_flow = flow_to_image(optical_flow_np, clip_flow_min=3, convert_to_bgr=True)
+            self.pub_optical_flow.publish(optical_flow_msg)
 
-                    img_optical_flow_msg = self.cv_bridge.cv2_to_imgmsg(img_optical_flow, encoding='bgr8')
-                    img_optical_flow_msg.header = msg.header
-                    self.pub_img_optical_flow.publish(img_optical_flow_msg)
+            if self.debug:
+                img_optical_flow = flow_to_image(optical_flow_np, clip_flow_min=3, convert_to_bgr=True)
 
-            self.feats_prev = feats.clone()
+                img_optical_flow_msg = self.cv_bridge.cv2_to_imgmsg(img_optical_flow, encoding='bgr8')
+                img_optical_flow_msg.header = msg.header
+                self.pub_img_optical_flow.publish(img_optical_flow_msg)
+
+        self.feats_prev = feats.clone()
 
     # Helper functions to create publishers
     def make_pub(self, msg_type, topic, depth=10, debug=False):

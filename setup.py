@@ -7,7 +7,7 @@ def parse_requirements(filename):
 setup(
     name='dinov3_ros',
     version='0.1.0',
-    packages=find_packages(include=['dinov3_toolkit', 'dinov3_toolkit.*']),
+    packages=find_packages(include=['dinov3_toolkit', 'dinov3_toolkit.*', 'tensorrt_lib', 'tensorrt_lib.*']),
     install_requires=parse_requirements('requirements.txt'),
     # package_data={
     #     "dinov3_toolkit": [
