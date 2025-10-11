@@ -1,9 +1,16 @@
+# -------------------------- Build-time arguments (defaults) --------------------------
 # Build arguments
 ARG ROS2_DISTRIBUTION="humble"
+# PyTorch
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu129
+# Parallel build cores for colcon / make
+ARG BUILD_CORES=4
 
 # By default, use ROS 2 Humble as the base image
 FROM osrf/ros:${ROS2_DISTRIBUTION}-desktop
 ARG ROS2_DISTRIBUTION
+ARG TORCH_INDEX_URL
+ARG BUILD_CORES
 
 WORKDIR /dinov3_ros
 SHELL ["/bin/bash", "-c"]
@@ -19,7 +26,7 @@ RUN apt-get update &&  apt-get install -y \
 RUN pip install -e . 
 
 # Install your pytorch version 
-RUN pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu129 
+RUN pip3 install torch torchvision --index-url ${TORCH_INDEX_URL}
 
 # Install ROS 2 dependencies through rosdep
 RUN source /opt/ros/${ROS2_DISTRIBUTION}/setup.bash && \
@@ -31,7 +38,7 @@ RUN source /opt/ros/${ROS2_DISTRIBUTION}/setup.bash && \
     rosdep install --from-paths . --ignore-src -r -y
 
 # ---------------------- Packages build ------------------------------------
-RUN export MAKEFLAGS="-j 4" && \
+RUN export MAKEFLAGS="-j {BUILD_CORES}" && \
     echo "source /opt/ros/${ROS2_DISTRIBUTION}/setup.bash" >> ~/.bashrc && \
     echo "source /dinov3_ros/ros2_ws/install/setup.bash" >> ~/.bashrc && \
     source /opt/ros/${ROS2_DISTRIBUTION}/setup.bash &&\

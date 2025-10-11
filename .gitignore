@@ -19,4 +19,7 @@ log/
 aux_packages/
 
 # Files of pytorch models
-dinov3_toolkit/backbone/weights/*.pth
+dinov3_toolkit/backbone/weights/
+
+# TensorRT lib
+tensorrt_lib/

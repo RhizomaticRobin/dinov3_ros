@@ -42,12 +42,10 @@ If running with docker, two steps are needed to work:
 
 1. First install the [Nvidia Container toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) in the host machine.
 
-2. In the Dockerfile, change the pytorch version according to your CUDA version.
-
-Then, run:
+2. Build the Dockerfile setting any argument, such as the torch index URL. Finally, create the container, with the following lines:
 
 ``` 
-docker compose build
+docker compose build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu129
 docker compose up
 ``` 
 

@@ -10,7 +10,7 @@ services:
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /var/run/docker.sock:/var/run/docker.sock
-      - .:/dinov3_ros # This will be deleted when the final deployment is running
+      - .:/dinov3_ros # Add this to allow any change in the host and reflect it in the container
     environment:
       - DISPLAY=$DISPLAY
       - QT_X11_NO_MITSHM=1
