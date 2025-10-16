@@ -81,8 +81,6 @@ RUN export MAKEFLAGS="-j ${BUILD_CORES}" && \
     colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release && \
     . install/setup.bash
 
-ARG CUDA_TOOLKIT_PKG=cuda-toolkit-12-9
-
 # -------------------------- CUDA Toolkit --------------------------
 # Install CUDA keyring + toolkit tied to the chosen major.minor
 RUN set -eux; \
